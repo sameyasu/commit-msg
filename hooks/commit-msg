@@ -1,0 +1,72 @@
+#!/bin/sh
+
+# phpcs auto-exec script
+
+phpcs_prefix=$(git config phpcs.prefix)
+phpcs_standard=$(git config phpcs.standard)
+phpcs_tmpdir=$(git config phpcs.tmpdir)
+
+tmpfile=""
+skip_keyword="PHPCS_SKIP"
+
+# if contains skip-keyword
+matches=$(cat $1 | grep -o "${skip_keyword}")
+
+if [ -n "$matches" ]; then
+    echo 'This contains skip-keyword "'${skip_keyword}'", so PHPCS skipped.'
+    # commit
+    exit 0
+fi
+
+# Redirect output to stderr.
+exec 1>&2
+
+if [ -z "${phpcs_prefix}" ]; then
+    echo '[ERROR] config "phpcs.prefix" is not set.'
+    echo 'e.g. git config phpcs.prefix /path/to/your/app'
+    exit 1
+fi
+
+if [ -z "${phpcs_standard}" ]; then
+    phpcs_standard="CakePHP"
+fi
+
+if [ -n "${phpcs_tmpdir}" ]; then
+    tmpfile=$(mktemp -p "${phpcs_tmpdir}")
+else
+    tmpfile=$(mktemp)
+fi
+
+errors=0
+
+for file in $(git diff --cached --name-only --diff-filter=AM)
+do
+    echo -n '[PHPCS:'${phpcs_standard}'] '${file}
+    ${phpcs_prefix}/cakephp/vendor/bin/phpcs \
+        --standard=${phpcs_standard} \
+        -q "${phpcs_prefix}/${file}" \
+        > ${tmpfile}
+
+    result=$(head -10 $tmpfile)
+
+    # passes when stdout is empty
+    if [ -z "$result" ]; then
+        echo ' <PASSED>'
+    else
+        errors=1
+        echo ' <ERROR>'
+        cat $tmpfile | sed -e '1d;/^FILE:/d;/^Time:/,$d'
+    fi
+done
+
+# removes tmpfile
+rm -f $tmpfile
+
+if [ $errors -eq 0 ]; then
+    echo 'Great! PHPCS passed all.'
+    exit 0
+else
+    echo 'Oops, PHPCS has not passed.'
+    echo 'This commit is CANCELED.'
+    exit 1
+fi
